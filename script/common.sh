@@ -349,19 +349,17 @@ _download_clash() {
     _okcat '✅' "下载成功：clash v${version}"
 }
 
-# 获取最新的 Clash Verge 版本号（用于 User-Agent）
-_get_clash_verge_version() {
-    local version=$(curl -sSL --connect-timeout 5 --max-time 10 --retry 1 \
-        'https://api.github.com/repos/zzzgydi/clash-verge/releases/latest' 2>/dev/null | \
-        grep -oP '"tag_name":\s*"v?\K[^"]+' | head -1)
-    echo "${version:-2.0.4}"
+# 获取浏览器 User-Agent（用于避免被订阅服务器拒绝）
+_get_browser_user_agent() {
+    # 使用常见的浏览器 User-Agent，避免被识别为自动化工具
+    echo "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 }
 
 _download_raw_config() {
     local dest=$1
     local url=$2
-    local version=$(_get_clash_verge_version)
-    local agent="clash-verge/v${version}"
+    # 使用浏览器 User-Agent，而不是 Clash Verge，避免被订阅服务器拒绝
+    local agent=$(_get_browser_user_agent)
     sudo curl \
         --silent \
         --show-error \
@@ -423,6 +421,18 @@ _start_convert() {
         sudo "$BIN_YQ" -i ".server.port = $newPort" "$BIN_SUBCONVERTER_CONFIG"
         BIN_SUBCONVERTER_PORT=$newPort
     }
+    
+    # 配置 SubConverter 使用更真实的 User-Agent，避免被订阅服务器拒绝
+    # 使用常见的浏览器 User-Agent，而不是暴露 SubConverter 身份
+    [ -e "$BIN_SUBCONVERTER_CONFIG" ] && {
+        # 设置 User-Agent 为常见的浏览器标识
+        local browser_ua="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        sudo "$BIN_YQ" -i ".user_agent = \"$browser_ua\"" "$BIN_SUBCONVERTER_CONFIG" 2>/dev/null || {
+            # 如果配置项不存在，尝试添加
+            sudo "$BIN_YQ" -i ". + {\"user_agent\": \"$browser_ua\"}" "$BIN_SUBCONVERTER_CONFIG" 2>/dev/null
+        }
+    }
+    
     local start=$(date +%s)
     # 子shell运行，屏蔽kill时的输出
     (sudo "$BIN_SUBCONVERTER" 2>&1 | sudo tee "$BIN_SUBCONVERTER_LOG" >/dev/null &)
