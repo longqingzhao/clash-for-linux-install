@@ -403,12 +403,58 @@ function _download_config() {
     local dest=$1
     local url=$2
     [ "${url:0:4}" = 'file' ] && return 0
-    _download_raw_config "$dest" "$url" || return 1
-    _okcat '🍃' '下载成功：内核验证配置...'
-    _valid_config "$dest" || {
-        _failcat '🍂' "验证失败：尝试订阅转换..."
-        _download_convert_config "$dest" "$url" || _failcat '🍂' "转换失败：请检查日志：$BIN_SUBCONVERTER_LOG"
-    }
+    
+    # 检测订阅链接是否已经是 Clash 格式
+    # 如果 URL 包含 clash=1 或 target=clash，说明可能已经是 Clash 格式，优先直接下载
+    local is_clash_format=false
+    echo "$url" | grep -qiE '(clash=1|target=clash|\.yaml|\.yml)' && is_clash_format=true
+    
+    # 先尝试直接下载（使用浏览器 User-Agent）
+    if _download_raw_config "$dest" "$url"; then
+        # 验证下载的配置是否有效
+        _okcat '🍃' '下载成功：内核验证配置...'
+        if _valid_config "$dest"; then
+            _okcat '✅' '配置验证通过'
+            return 0
+        fi
+        
+        # 如果配置无效且不是 Clash 格式，尝试通过 SubConverter 转换
+        if [ "$is_clash_format" != "true" ]; then
+            _failcat '🍂' "配置验证失败：尝试订阅转换..."
+            _download_convert_config "$dest" "$url" || {
+                _failcat '🍂' "转换失败：请检查日志：$BIN_SUBCONVERTER_LOG"
+                return 1
+            }
+            
+            # 再次验证转换后的配置
+            if _valid_config "$dest"; then
+                _okcat '✅' '转换成功：配置验证通过'
+                return 0
+            else
+                _failcat '🍂' "转换后的配置仍然无效"
+                return 1
+            fi
+        else
+            _failcat '🍂' "配置验证失败：订阅链接可能已损坏或格式不正确"
+            return 1
+        fi
+    else
+        # 直接下载失败，尝试通过 SubConverter 转换
+        _failcat '🍂' "直接下载失败，尝试订阅转换..."
+        _download_convert_config "$dest" "$url" || {
+            _failcat '🍂' "转换失败：请检查日志：$BIN_SUBCONVERTER_LOG"
+            return 1
+        }
+        
+        # 验证转换后的配置
+        if _valid_config "$dest"; then
+            _okcat '✅' '转换成功：配置验证通过'
+            return 0
+        else
+            _failcat '🍂' "转换后的配置无效"
+            return 1
+        fi
+    fi
 }
 
 _start_convert() {
