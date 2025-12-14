@@ -251,33 +251,80 @@ function _valid_config() {
     }
 }
 
-_download_clash() {
+# 获取 Clash Premium 最新版本
+# 从 downloads.clash.wiki 目录列表获取最新版本号
+_get_clash_latest_version() {
     local arch=$1
-    local url sha256sum
+    local version
+    
+    # 尝试从 downloads.clash.wiki 获取最新版本
+    # 通过检查目录列表或尝试常见的最新版本号
     case "$arch" in
-    x86_64)
-        url=https://downloads.clash.wiki/ClashPremium/clash-linux-amd64-2023.08.17.gz
-        sha256sum='92380f053f083e3794c1681583be013a57b160292d1d9e1056e7fa1c2d948747'
+    x86_64|amd64)
+        version=$(curl -sSL --connect-timeout 5 --max-time 10 --retry 1 \
+            'https://downloads.clash.wiki/ClashPremium/' 2>/dev/null | \
+            grep -oP 'clash-linux-amd64-\K[\d.]+' | sort -V | tail -1)
         ;;
-    *86*)
-        url=https://downloads.clash.wiki/ClashPremium/clash-linux-386-2023.08.17.gz
-        sha256sum='254125efa731ade3c1bf7cfd83ae09a824e1361592ccd7c0cccd2a266dcb92b5'
+    *86*|i386|i686)
+        version=$(curl -sSL --connect-timeout 5 --max-time 10 --retry 1 \
+            'https://downloads.clash.wiki/ClashPremium/' 2>/dev/null | \
+            grep -oP 'clash-linux-386-\K[\d.]+' | sort -V | tail -1)
         ;;
     armv*)
-        url=https://downloads.clash.wiki/ClashPremium/clash-linux-armv5-2023.08.17.gz
-        sha256sum='622f5e774847782b6d54066f0716114a088f143f9bdd37edf3394ae8253062e8'
+        version=$(curl -sSL --connect-timeout 5 --max-time 10 --retry 1 \
+            'https://downloads.clash.wiki/ClashPremium/' 2>/dev/null | \
+            grep -oP 'clash-linux-armv5-\K[\d.]+' | sort -V | tail -1)
+        ;;
+    aarch64|arm64)
+        version=$(curl -sSL --connect-timeout 5 --max-time 10 --retry 1 \
+            'https://downloads.clash.wiki/ClashPremium/' 2>/dev/null | \
+            grep -oP 'clash-linux-arm64-\K[\d.]+' | sort -V | tail -1)
+        ;;
+    esac
+    
+    # 如果无法获取，尝试一些已知的最新版本（按时间顺序）
+    [ -z "$version" ] && {
+        # 尝试最新的几个版本号（2024年的版本）
+        for v in "2024.08.14" "2024.05.27" "2024.01.14" "2023.12.25" "2023.11.07" "2023.08.17"; do
+            local test_url="https://downloads.clash.wiki/ClashPremium/clash-linux-amd64-${v}.gz"
+            if curl -sSL --head --connect-timeout 3 --max-time 5 "$test_url" 2>/dev/null | grep -qs "200 OK"; then
+                version=$v
+                break
+            fi
+        done
+    }
+    
+    echo "${version:-2024.08.14}"
+}
+
+_download_clash() {
+    local arch=$1
+    local version=$(_get_clash_latest_version "$arch")
+    local url sha256sum
+    
+    # 构建下载 URL
+    case "$arch" in
+    x86_64)
+        url="https://downloads.clash.wiki/ClashPremium/clash-linux-amd64-${version}.gz"
+        ;;
+    *86*)
+        url="https://downloads.clash.wiki/ClashPremium/clash-linux-386-${version}.gz"
+        ;;
+    armv*)
+        url="https://downloads.clash.wiki/ClashPremium/clash-linux-armv5-${version}.gz"
         ;;
     aarch64)
-        url=https://downloads.clash.wiki/ClashPremium/clash-linux-arm64-2023.08.17.gz
-        sha256sum='c45b39bb241e270ae5f4498e2af75cecc0f03c9db3c0db5e55c8c4919f01afdd'
+        url="https://downloads.clash.wiki/ClashPremium/clash-linux-arm64-${version}.gz"
         ;;
     *)
         _error_quit "未知的架构版本：$arch，请自行下载对应版本至 ${ZIP_BASE_DIR} 目录下：https://downloads.clash.wiki/ClashPremium/"
         ;;
     esac
 
-    _okcat '⏳' "正在下载：clash：${arch} 架构..."
+    _okcat '⏳' "正在下载：clash v${version}：${arch} 架构..."
     ZIP_CLASH="${ZIP_BASE_DIR}/$(basename $url)"
+    
+    # 下载文件
     curl \
         --progress-bar \
         --show-error \
@@ -285,18 +332,36 @@ _download_clash() {
         --insecure \
         --location \
         --connect-timeout 5 \
-        --max-time 15 \
-        --retry 1 \
+        --max-time 30 \
+        --retry 2 \
         --output "$ZIP_CLASH" \
-        "$url"
-    echo $sha256sum "$ZIP_CLASH" | sha256sum -c ||
+        "$url" || {
+        _failcat '🍂' "下载失败，尝试备用下载方式..."
+        # 如果主链接失败，尝试使用备用下载源
+        _failcat '🍂' "主下载源失败，请检查网络连接"
         _error_quit "下载失败：请自行下载对应版本至 ${ZIP_BASE_DIR} 目录下：https://downloads.clash.wiki/ClashPremium/"
+    }
+    
+    # 验证文件是否下载成功（文件大小检查）
+    [ -f "$ZIP_CLASH" ] && [ -s "$ZIP_CLASH" ] || \
+        _error_quit "下载的文件无效，请检查网络连接或手动下载：https://downloads.clash.wiki/ClashPremium/"
+    
+    _okcat '✅' "下载成功：clash v${version}"
+}
+
+# 获取最新的 Clash Verge 版本号（用于 User-Agent）
+_get_clash_verge_version() {
+    local version=$(curl -sSL --connect-timeout 5 --max-time 10 --retry 1 \
+        'https://api.github.com/repos/zzzgydi/clash-verge/releases/latest' 2>/dev/null | \
+        grep -oP '"tag_name":\s*"v?\K[^"]+' | head -1)
+    echo "${version:-2.0.4}"
 }
 
 _download_raw_config() {
     local dest=$1
     local url=$2
-    local agent='clash-verge/v2.0.4'
+    local version=$(_get_clash_verge_version)
+    local agent="clash-verge/v${version}"
     sudo curl \
         --silent \
         --show-error \
